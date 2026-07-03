@@ -184,8 +184,8 @@ def main():
         plt.imsave(os.path.join(out_path, 'label', fname), clear_color(ref_img))
         plt.imsave(os.path.join(out_path, 'recon', fname), clear_color(sample))
 
-        if i >= 0:
-            break
+        # if i >= 0:
+        #     break
 
     end_time = time.time()
     running_time = end_time - start_time
