@@ -1,0 +1,23 @@
+conditioning:
+  method: ps
+  params:
+    scale: 2
+
+algorithm:
+  name: gamp_mm  # gamp_mm / gamp_ga / gamp-ga / gamp_dmps
+
+data:
+  name: ffhq
+  root: ./data/samples_denoise/
+
+measurement:
+  operator:
+    name: CS
+  noise:
+    name: gaussian
+    sigma: 0.05
+
+  # Non-differentiable element-wise observation (optional)
+  observation:
+    type: quantization
+    step_size: 0.1  # Δ — smaller values approximate AWGN, larger values coarsen

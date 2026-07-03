@@ -1,0 +1,25 @@
+sampler: ddim
+steps: 1000
+noise_schedule: linear
+model_mean_type: epsilon
+model_var_type: fixed_small
+dynamic_threshold: False
+clip_denoised: True
+rescale_timesteps: False
+timestep_respacing: 4
+
+prior:
+  type: openai_cm
+  repo_root: consistency_models-main
+  checkpoint: consistency_models-main/checkpoints/cd_cat256_lpips.pt
+  image_size: 256
+  sigma_min: 0.002
+  sigma_max: 80.0
+  # Old direct CM schedule:
+  # num_steps: 4
+  num_steps: 20 # 25 (20)
+  base_num_steps: 40
+  timestep_indices: null # [0,17,39] [0, 6, 11, 17, 22, 28, 33, 39] # null #
+  tau_inflation: 1.0
+  correction_damping: 1 # 0.25
+  clip_denoised: True

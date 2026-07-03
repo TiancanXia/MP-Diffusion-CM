@@ -1,0 +1,19 @@
+conditioning:
+  method: ps
+  params:
+    scale: 2
+
+algorithm:
+  name: vamp # gamp_mm cm_mmps vamp
+  prior_type: openai_cm
+
+data:
+  name: ffhq
+  root: ./data/LSUN cat/ # LSUN bedroom LSUN cat ffhq_samples
+
+measurement:
+  operator:
+    name: CS
+  noise:
+    name: gaussian
+    sigma: 0.05

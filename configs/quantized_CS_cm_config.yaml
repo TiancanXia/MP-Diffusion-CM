@@ -1,0 +1,23 @@
+conditioning:
+  method: ps
+  params:
+    scale: 2
+
+algorithm:
+  name: gamp_mm
+  prior_type: openai_cm
+
+data:
+  name: ffhq
+  root: ./data/samples_denoise/
+
+measurement:
+  operator:
+    name: CS
+  noise:
+    name: gaussian
+    sigma: 0.05
+
+  observation:
+    type: quantization
+    step_size: 0.1

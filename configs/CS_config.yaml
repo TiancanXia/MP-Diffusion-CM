@@ -1,0 +1,21 @@
+conditioning:
+  method: ps #ps
+  params:
+    scale: 2 # default value 0.3  noise 0.05 best 2    noise 0.5 best 1
+
+algorithm:
+  name: gamp_mm # mmps pgdm dps gamp_mm gamp_ga vamp
+
+data:
+  name: ffhq # choices: ffhq, bedroom, cat, celeba-hq
+  root: ./data/samples_denoise/ # address to put the associated images
+
+measurement:
+  operator:
+    name: CS
+#    in_shape: !!python/tuple [1, 3, 256, 256]
+#    batchsize: 16
+#    sparsity: 2304/16384
+  noise: 
+    name: gaussian
+    sigma: 0.05
