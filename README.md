@@ -159,7 +159,7 @@ GAMP-diffusion/
 |-- compute_metric.py               # Metric computation utilities
 |-- guided_diffusion/               # Diffusion model components
 |   |-- measurements.py             # Measurement operators
-|   `-- gaussian_diffusion.py       # DDPM/CM samplers with GAMP, MMPS, and VAMP integration
+|   `-- gaussian_diffusion.py       # DDPM/CM samplers with GAMP, MMPS, and VAMP integration and GAMP/VAMP with CM denoiser
 |-- consistency_models-main/        # OpenAI Consistency Models code and checkpoints
 |-- configs/                        # Configuration files for different tasks
 |   |-- diffusion_config.yaml        # Standard diffusion prior config
