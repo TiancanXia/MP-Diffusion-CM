@@ -1,6 +1,7 @@
 import math
 import os
 from functools import partial
+from xml.parsers.expat import model
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -13,12 +14,14 @@ from GAMP import GAMP
 
 __SAMPLER__ = {}
 
+
 def register_sampler(name: str):
     def wrapper(cls):
         if __SAMPLER__.get(name, None):
-            raise NameError(f"Name {name} is already registered!") 
+            raise NameError(f"Name {name} is already registered!")
         __SAMPLER__[name] = cls
         return cls
+
     return wrapper
 
 
@@ -37,19 +40,18 @@ def create_sampler(sampler,
                    clip_denoised,
                    rescale_timesteps,
                    timestep_respacing=""):
-    
     sampler = get_sampler(name=sampler)
-    
+
     betas = get_named_beta_schedule(noise_schedule, steps)
     if not timestep_respacing:
         timestep_respacing = [steps]
-         
+
     return sampler(use_timesteps=space_timesteps(steps, timestep_respacing),
                    betas=betas,
                    model_mean_type=model_mean_type,
                    model_var_type=model_var_type,
                    dynamic_threshold=dynamic_threshold,
-                   clip_denoised=clip_denoised, 
+                   clip_denoised=clip_denoised,
                    rescale_timesteps=rescale_timesteps)
 
 
@@ -67,7 +69,7 @@ class GaussianDiffusion:
         betas = np.array(betas, dtype=np.float64)
         self.betas = betas
         assert self.betas.ndim == 1, "betas must be 1-D"
-        assert (0 < self.betas).all() and (self.betas <=1).all(), "betas must be in (0..1]"
+        assert (0 < self.betas).all() and (self.betas <= 1).all(), "betas must be in (0..1]"
 
         self.num_timesteps = int(self.betas.shape[0])
         self.rescale_timesteps = rescale_timesteps
@@ -87,7 +89,7 @@ class GaussianDiffusion:
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_variance = (
-            betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+                betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
         )
         # log calculation clipped because the posterior variance is 0 at the
         # beginning of the diffusion chain.
@@ -95,19 +97,19 @@ class GaussianDiffusion:
             np.append(self.posterior_variance[1], self.posterior_variance[1:])
         )
         self.posterior_mean_coef1 = (
-            betas * np.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+                betas * np.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
         )
         self.posterior_mean_coef2 = (
-            (1.0 - self.alphas_cumprod_prev)
-            * np.sqrt(alphas)
-            / (1.0 - self.alphas_cumprod)
+                (1.0 - self.alphas_cumprod_prev)
+                * np.sqrt(alphas)
+                / (1.0 - self.alphas_cumprod)
         )
 
         self.mean_processor = get_mean_processor(model_mean_type,
                                                  betas=betas,
                                                  dynamic_threshold=dynamic_threshold,
-                                                 clip_denoised=clip_denoised)    
-    
+                                                 clip_denoised=clip_denoised)
+
         self.var_processor = get_var_processor(model_var_type,
                                                betas=betas)
         ###
@@ -125,7 +127,7 @@ class GaussianDiffusion:
         :param t: the number of diffusion steps (minus 1). Here, 0 means one step.
         :return: A tuple (mean, variance, log_variance), all of x_start's shape.
         """
-        
+
         mean = extract_and_expand(self.sqrt_alphas_cumprod, t, x_start) * x_start
         variance = extract_and_expand(1.0 - self.alphas_cumprod, t, x_start)
         log_variance = extract_and_expand(self.log_one_minus_alphas_cumprod, t, x_start)
@@ -145,7 +147,7 @@ class GaussianDiffusion:
         """
         noise = torch.randn_like(x_start)
         assert noise.shape == x_start.shape
-        
+
         coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_start)
         coef2 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, x_start)
 
@@ -166,10 +168,10 @@ class GaussianDiffusion:
         posterior_log_variance_clipped = extract_and_expand(self.posterior_log_variance_clipped, t, x_t)
 
         assert (
-            posterior_mean.shape[0]
-            == posterior_variance.shape[0]
-            == posterior_log_variance_clipped.shape[0]
-            == x_start.shape[0]
+                posterior_mean.shape[0]
+                == posterior_variance.shape[0]
+                == posterior_log_variance_clipped.shape[0]
+                == x_start.shape[0]
         )
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
@@ -182,30 +184,30 @@ class GaussianDiffusion:
                       save_root):
         """
         The function used for sampling from noise.
-        """ 
+        """
         img = x_start
         device = x_start.device
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
             time = torch.tensor([idx] * img.shape[0], device=device)
-            
+
             img = img.requires_grad_()
             out = self.p_sample(x=img, t=time, model=model)
-            
+
             # Give condition.
             noisy_measurement = self.q_sample(measurement, t=time)
 
             # TODO: how can we handle argument for different condition method?
             img, distance = measurement_cond_fn(x_t=out['sample'],
-                                      measurement=measurement,
-                                      noisy_measurement=noisy_measurement,
-                                      x_prev=img,
-                                      x_0_hat=out['pred_xstart'],
-                                      a_t=self.sqrt_alphas_cumprod[time],
-                                      b2_t=1 - self.alphas_cumprod[time])
+                                                measurement=measurement,
+                                                noisy_measurement=noisy_measurement,
+                                                x_prev=img,
+                                                x_0_hat=out['pred_xstart'],
+                                                a_t=self.sqrt_alphas_cumprod[time],
+                                                b2_t=1 - self.alphas_cumprod[time])
             img = img.detach_()
-           
+
             pbar.set_postfix({'distance': distance.item()}, refresh=False)
             if record:
                 if idx % 10 == 0:
@@ -215,16 +217,16 @@ class GaussianDiffusion:
         return img
 
     def _step_mmps(self,
-                      model,
-                      x_start,
-                      measurement,
-                      H_funcs,
-                      noise_std,
-                      record,
-                      save_root,
-                      alg_name,
-                      diffusion_sampler,
-                      obs_module=None):
+                   model,
+                   x_start,
+                   measurement,
+                   H_funcs,
+                   noise_std,
+                   record,
+                   save_root,
+                   alg_name,
+                   diffusion_sampler,
+                   obs_module=None):
         """
         The function used for sampling from noise.
         """
@@ -240,12 +242,12 @@ class GaussianDiffusion:
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
             time = torch.tensor([idx] * img.shape[0], device=device)
-            
+
             img = img.requires_grad_()
             out = self.p_sample(x=img, t=time, model=model)
             x_0_hat = out['pred_xstart']
             x_t = out['sample']
-               
+
             # TODO: how can we handle argument for different condition method?
             noise_sigma2 = noise_std ** 2
             b2_t = (1 - self.alphas_cumprod[time])
@@ -254,14 +256,14 @@ class GaussianDiffusion:
                 sigma_t = b2_t / (a_t ** 1)  # MMPS
 
             else:
-                sigma_t = b2_t # PGDM
+                sigma_t = b2_t  # PGDM
             n_iters = 1  # GDPM
 
             pbar.set_postfix({'sigma_t': sigma_t.item()}, refresh=False)
 
-            bs = 1 # H_funcs.block_num
+            bs = 1  # H_funcs.block_num
             N = H_funcs.M
-            M =  -1 # H_funcs.N
+            M = -1  # H_funcs.N
             y = measurement.view(bs, M)
 
             if alg_name == 'dps':
@@ -273,7 +275,7 @@ class GaussianDiffusion:
                 # DPS
                 value = torch.tensor(H_funcs.block_num * int(H_funcs.N // 3), dtype=torch.float32)
                 input_size = int(torch.sqrt(value).item())
-                difference = measurement.view(1,3,input_size,input_size) - H_funcs.forward(x_0_hat.view(1, -1))
+                difference = measurement.view(1, 3, input_size, input_size) - H_funcs.forward(x_0_hat.view(1, -1))
                 norm = torch.linalg.norm(difference)
                 norm_grad = torch.autograd.grad(outputs=norm, inputs=img)[0]
                 img = x_t - norm_grad * 2  # noise 0.05 best 2
@@ -331,7 +333,7 @@ class GaussianDiffusion:
                 # ==========================================
                 eps = 1e-8
                 vv = torch.zeros_like(b)  #
-                r0 = b  # 
+                r0 = b  #
                 beta = torch.norm(r0, dim=1, keepdim=True)  # (bs, 1)
                 # Store Arnoldi V Hessenberg H
                 V = [r0 / (beta + eps)]
@@ -388,16 +390,15 @@ class GaussianDiffusion:
                         scale = out["scale"]
                         norm_grad = sigma_t * score_y_given_x
                         img = x_t + norm_grad * scale
-           
+
             img = img.detach_()
-           
+
             if record:
                 if idx % 10 == 0:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
         return img
-
 
     def _step_cm_mmps(self,
                       model,
@@ -428,7 +429,7 @@ class GaussianDiffusion:
         img = x_start
         device = x_start.device
         num_cm_steps = len(model.sigmas)
-        pbar = tqdm(list(range(num_cm_steps)))
+        pbar = tqdm(list(range(num_cm_steps - 1)))
 
         noise_sigma2 = noise_std ** 2
         bs = 1
@@ -443,7 +444,7 @@ class GaussianDiffusion:
             img = img.requires_grad_()
             x_0_hat = model.endpoint_from_vp(img, sigma)
 
-            n_iters = 1
+            n_iters = 5
             pbar.set_postfix({'sigma': sigma.item()}, refresh=False)
 
             # Compute b = y - A * E[x|x_t]
@@ -504,7 +505,7 @@ class GaussianDiffusion:
             correction_damping = getattr(model, "correction_damping", 1.0)
             x_hat1 = x_0_hat + correction_damping * (x_hat1_raw - x_0_hat)
 
-            if loop_idx < num_cm_steps - 1:
+            if loop_idx < num_cm_steps - 2:
                 sigma_next = model.get_sigma(loop_idx + 1, device=img.device, dtype=img.dtype)
                 a_next, _ = model.vp_coeffs(sigma_next)
                 sigma_min = getattr(model.diffusion, "sigma_min", 0.002)
@@ -523,18 +524,18 @@ class GaussianDiffusion:
             torch.cuda.empty_cache()
 
         return img
-    
+
     def _step_gamp(self,
-                           model,
-                           x_start,
-                           measurement,
-                           H_funcs,
-                           noise_std,
-                           record,
-                           save_root,
-                           alg_name,
-                           diffusion_sampler,
-                           obs_module=None):
+                   model,
+                   x_start,
+                   measurement,
+                   H_funcs,
+                   noise_std,
+                   record,
+                   save_root,
+                   alg_name,
+                   diffusion_sampler,
+                   obs_module=None):
         """
         The function used for sampling from noise.
         """
@@ -569,15 +570,15 @@ class GaussianDiffusion:
             x_t = img
             b2_t = (1 - self.alphas_cumprod[time])
             a_t = self.sqrt_alphas_cumprod[time]
-            # sigma_t = b2_t / (a_t ** 2) # 
-            sigma_t = b2_t / (a_t ** 2) # MMPS 1
+            # sigma_t = b2_t / (a_t ** 2) #
+            sigma_t = b2_t / (a_t ** 2)  # MMPS 1
             x_hat = x_hat_temp
             tau_x = tau_x_temp
             s = s_temp
 
             if idx < 50:
-                progress = 1 - (idx / 50) #
-                max_iter = int(6 + 5 * (progress ** 2)) #
+                progress = 1 - (idx / 50)  #
+                max_iter = int(6 + 5 * (progress ** 2))  #
             elif idx < 30:
                 max_iter = 3
             else:
@@ -676,7 +677,7 @@ class GaussianDiffusion:
                         # ==========================================
                         # eps = 1e-8
                         # vv = torch.zeros_like(bb)  #
-                        # r0 = bb  # 
+                        # r0 = bb  #
                         # beta = torch.norm(r0, dim=1, keepdim=True)  # (bs, 1)
                         # # Store Arnoldi V Hessenberg H
                         # V = [r0 / (beta + eps)]
@@ -710,18 +711,18 @@ class GaussianDiffusion:
                         # ==========================================
                         eps_gmres = 1e-8
                         r0 = bb
-                        beta = torch.norm(r0, dim=1, keepdim=True)         # (bs, 1)
-                        v_0 = r0 / (beta + eps_gmres)                      # (bs, N)
-                        w = M_product(v_0)                                 # (bs, N)
+                        beta = torch.norm(r0, dim=1, keepdim=True)  # (bs, 1)
+                        v_0 = r0 / (beta + eps_gmres)  # (bs, N)
+                        w = M_product(v_0)  # (bs, N)
                         # h_{0,0} = v_0^T * w
-                        h_00 = torch.sum(v_0 * w, dim=1, keepdim=True)     # (bs, 1)
+                        h_00 = torch.sum(v_0 * w, dim=1, keepdim=True)  # (bs, 1)
                         # w_perp = w - h_{0,0} * v_0
-                        w_perp = w - h_00 * v_0                            # (bs, N)
+                        w_perp = w - h_00 * v_0  # (bs, N)
                         # h_{1,0} = ||w_perp||
-                        h_10 = torch.norm(w_perp, dim=1, keepdim=True)     # (bs, 1)
+                        h_10 = torch.norm(w_perp, dim=1, keepdim=True)  # (bs, 1)
                         # y = (h_00 * beta) / (h_00^2 + h_10^2 + eps)
-                        y_opt = (h_00 * beta) / (h_00**2 + h_10**2 + eps_gmres) # (bs, 1)
-                        vv = v_0 * y_opt                                   # (bs, N)
+                        y_opt = (h_00 * beta) / (h_00 ** 2 + h_10 ** 2 + eps_gmres)  # (bs, 1)
+                        vv = v_0 * y_opt  # (bs, N)
                         # ==========================================
 
                         final_vjp_input = vv.view(1, -1).view_as(img)  # (1 -1)
@@ -746,30 +747,30 @@ class GaussianDiffusion:
                 # if iter < max_iter - 1:   # < max_iter - 1:
                 #     vx = torch.randn_like(x_t)
                 #     hvp = torch.autograd.grad(
-                #     outputs=nabla_xt_r, 
-                #     inputs=x_t, 
-                #     grad_outputs=vx, 
+                #     outputs=nabla_xt_r,
+                #     inputs=x_t,
+                #     grad_outputs=vx,
                 #     retain_graph=True
                 #     )[0]
                 #     trace_H = vx * hvp
-                
+
                 # === Optimization 1: Only when iter == 0 ===
                 if iter <= 1 and max_iter > 1:
                     vx = torch.randn_like(x_t)
                     hvp = torch.autograd.grad(
-                        outputs=nabla_xt_r, 
-                        inputs=x_t, 
-                        grad_outputs=vx, 
+                        outputs=nabla_xt_r,
+                        inputs=x_t,
+                        grad_outputs=vx,
                         retain_graph=True
                     )[0]
                     # Use detach()
                     trace_H = (vx * hvp)
 
-                if iter < max_iter - 1:   # < max_iter - 1:
+                if iter < max_iter - 1:  # < max_iter - 1:
                     # \tau_x = (b^2/a^2) + (b^4/a^2) * trace_H
-                    tau_x = (b2_t / a_t**2) + (b2_t**2 / a_t**2) * trace_H
+                    tau_x = (b2_t / a_t ** 2) + (b2_t ** 2 / a_t ** 2) * trace_H
                 else:
-                    tau_x = (b2_t / a_t ** 2) - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r  + b2_t) #
+                    tau_x = (b2_t / a_t ** 2) - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)  #
                 # inflation_factor = 1.0 + 0.5 * b2_t.item()
                 # tau_x = tau_x * inflation_factor
                 tau_x = torch.clamp(tau_x, min=1e-15, max=1e8)
@@ -815,7 +816,7 @@ class GaussianDiffusion:
             # DPM-solver++
             # x_0_cur = x_hat1
 
-            # # 
+            # #
             # lambda_cur = self.lambda_t[idx]
             # lambda_next = self.lambda_next[idx]
             # alpha_next = np.sqrt(self.alphas_cumprod_prev[idx])
@@ -826,11 +827,11 @@ class GaussianDiffusion:
 
             # # --- Algorithm 2 ---
             # if loop_idx == 0 or len(self.old_x_0_listhat) == 0:
-            #     # Step 4: 
+            #     # Step 4:
             #     # x_next = (sigma_next / sigma_cur) * x - alpha_next * (exp(-h) - 1) * x_theta
             #     img = (sigma_next / sigma_cur) * img - alpha_next * torch.expm1(-torch.tensor(h, device=device)) * x_0_cur
 
-            #     # Step 5: 
+            #     # Step 5:
             #     self.old_x_0_listhat.append((lambda_cur, x_0_cur))
 
             # else:
@@ -859,7 +860,7 @@ class GaussianDiffusion:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
             # img = img.clip_(-1,1)
-            ### 
+            ###
             torch.cuda.empty_cache()
 
         return img
@@ -902,6 +903,7 @@ class GaussianDiffusion:
         bs = H_funcs.block_num
         M = H_funcs.N
         N = H_funcs.M
+        rho_cm = 0.8
 
         for loop_idx in pbar:
             sigma = model.get_sigma(loop_idx, device=img.device, dtype=img.dtype)
@@ -914,14 +916,15 @@ class GaussianDiffusion:
 
             x_hat = x_hat_temp
             tau_x = tau_x_temp
+            tau_x_new = tau_x_temp
             s = s_temp
             if loop_idx < 10:
-                progress = (loop_idx / 40) #
-                max_iter = 3 # int(2 + 3 * (progress ** 2)) #
+                progress = (loop_idx / 40)  #
+                max_iter = 3  # int(2 + 3 * (progress ** 2)) #
             else:
-                max_iter = 3 
-            
-            # max_iter = 2
+                max_iter = 3
+
+                # max_iter = 2
 
             for iter in range(max_iter):
                 with torch.no_grad():
@@ -955,12 +958,12 @@ class GaussianDiffusion:
 
                     def M_product(vv):
                         vjp_input = sigma_t * vv.view(1, -1)
-                        vjp = vjp_input # GA
+                        vjp = vjp_input  # GA
                         # vjp_input_for_grad = vjp_input.view_as(img)
                         # vjp = torch.autograd.grad(
                         #     outputs=x_0_hat,
                         #     inputs=img,
-                        #     grad_outputs=vjp_input_for_grad,
+                        #     grad_outputs=vjp_input.view_as(img),
                         #     retain_graph=True
                         # )[0]
                         Avjp = vjp.view(1, -1).view(bs, N)
@@ -974,11 +977,11 @@ class GaussianDiffusion:
                     h_00 = torch.sum(v_0 * w, dim=1, keepdim=True)
                     w_perp = w - h_00 * v_0
                     h_10 = torch.norm(w_perp, dim=1, keepdim=True)
-                    y_opt = (h_00 * beta) / (h_00**2 + h_10**2 + eps_gmres)
+                    y_opt = (h_00 * beta) / (h_00 ** 2 + h_10 ** 2 + eps_gmres)
                     vv = v_0 * y_opt
 
                     final_vjp_input = vv.view(1, -1).view_as(img)
-                    is_last_grad = (iter == max_iter) # - 1
+                    is_last_grad = (iter == max_iter)  # - 1
                     score_y_given_x = torch.autograd.grad(
                         outputs=x_0_hat,
                         inputs=img,
@@ -996,9 +999,9 @@ class GaussianDiffusion:
                 x_hat1_raw = (x_t + b2_t * nabla_xt_r) / a_t
                 correction_damping = getattr(model, "correction_damping", 1.0)
                 x_hat1 = x_0_hat + correction_damping * (x_hat1_raw - x_0_hat)
-                x_hat = x_hat1.view(tau_r.shape)
+                x_hat_new = x_hat1.view(tau_r.shape)
 
-                if iter <= max_iter - 1 and max_iter > 1:
+                if iter < max_iter and max_iter > 1:
                     vx = torch.randn_like(x_t)
                     hvp = torch.autograd.grad(
                         outputs=nabla_xt_r,
@@ -1007,13 +1010,18 @@ class GaussianDiffusion:
                         retain_graph=True
                     )[0]
                     trace_H = vx * hvp
+                    trace_H = trace_H.view(bs, -1)
 
                 if iter < max_iter:
-                    tau_x = (b2_t / a_t**2) + (b2_t**2 / a_t**2) * trace_H
+                    tau_x_new = (b2_t / a_t ** 2) + (b2_t ** 2 / a_t ** 2) * trace_H
                 else:
-                    tau_x = (b2_t / a_t ** 2) - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)
-                    tau_x = tau_x * getattr(model, "tau_inflation", 1.0)
-                tau_x = torch.clamp(tau_x, min=1e-15, max=1e8)
+                    tau_x_new = (b2_t / a_t ** 2) - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)
+                    tau_x_new = tau_x_new * getattr(model, "tau_inflation", 1.0)
+
+                with torch.no_grad():
+                    x_hat = rho_cm * x_hat_new.detach() + (1.0 - rho_cm) * x_hat.detach()
+                    tau_x = rho_cm * tau_x_new.detach() + (1.0 - rho_cm) * tau_x.detach()
+                    tau_x = torch.clamp(tau_x, min=1e-15, max=1e8)
 
                 tau_p = (H_funcs.H_squared(tau_x.view(1, -1))).view(bs, M)
 
@@ -1044,16 +1052,16 @@ class GaussianDiffusion:
         return img
 
     def _step_vamp(self,
-                           model,
-                           x_start,
-                           measurement,
-                           H_funcs,
-                           noise_std,
-                           record,
-                           save_root,
-                           alg_name,
-                           diffusion_sampler,
-                           obs_module=None):
+                   model,
+                   x_start,
+                   measurement,
+                   H_funcs,
+                   noise_std,
+                   record,
+                   save_root,
+                   alg_name,
+                   diffusion_sampler,
+                   obs_module=None):
         """
         The function used for sampling from noise.
         """
@@ -1082,7 +1090,7 @@ class GaussianDiffusion:
         if not torch.allclose(s2, torch.ones_like(s2), rtol=1e-4, atol=1e-5):
             raise ValueError("VAMP closed-form Module A requires a row-orthonormal matrix (A A^T = I).")
 
-        v_A_pri_temp = 10*x_start.new_ones(1)
+        v_A_pri_temp = 10 * x_start.new_ones(1)
         x_A_pri_temp = x_start.new_zeros(H_funcs.block_num, H_funcs.M)
         y = measurement.view(H_funcs.block_num, H_funcs.N)
         bs = H_funcs.block_num
@@ -1124,7 +1132,7 @@ class GaussianDiffusion:
                     u = b / lmmse_denom
 
                     # --- Line 5 x_A_post ---
-                    x_A_post = x_A_pri + v_A_pri * H_funcs.Ht(u.view(1,-1)).view(bs, N)
+                    x_A_post = x_A_pri + v_A_pri * H_funcs.Ht(u.view(1, -1)).view(bs, N)
                     # --- Line 6   v_A_post ---
                     # tr(A.T (v_A*AA.T + delta2*I)^-1 A) = sum( lambda / (v_A * lambda + delta2) )
                     tr_term = torch.sum(s2 / (v_A_pri * s2 + delta2_0))
@@ -1150,6 +1158,7 @@ class GaussianDiffusion:
                     # MMPS
                     #   # Compute b = r - E[x|x_t]
                     bb = x_B_pri.detach() - x_0_hat.view(1, -1).view(bs, N)  # (bs, N)
+
                     def M_product2(vv):
                         # Compute VJP: (grad_outputs^T * J)^T -> J^T * grad_outputs
                         vjp_input = (sigma_t) * vv.view(1, -1)  # (1,-1)  # 0.1
@@ -1158,10 +1167,10 @@ class GaussianDiffusion:
                         # MMPS  asymmetric
                         vjp_input_for_grad = vjp_input.view_as(img)
                         vjp = torch.autograd.grad(
-                                outputs=x_0_hat,
-                                inputs=img,
-                                grad_outputs=vjp_input_for_grad,
-                                retain_graph=True
+                            outputs=x_0_hat,
+                            inputs=img,
+                            grad_outputs=vjp_input_for_grad,
+                            retain_graph=True
                         )[0]
                         # Obtain M*v = \Sigma_y * v + A * vjp
                         Avjp = vjp.view(1, -1).view(bs, N)
@@ -1172,29 +1181,29 @@ class GaussianDiffusion:
                     # ==========================================
                     eps_gmres = 1e-8
                     r0 = bb
-                    beta = torch.norm(r0, dim=1, keepdim=True)         # (bs, 1)
+                    beta = torch.norm(r0, dim=1, keepdim=True)  # (bs, 1)
                     require_finite("GMRES initial residual", beta)
-                    v_0 = r0 / (beta + eps_gmres)                      # (bs, N)
-                    w = M_product2(v_0)                                # (bs, N)
+                    v_0 = r0 / (beta + eps_gmres)  # (bs, N)
+                    w = M_product2(v_0)  # (bs, N)
                     require_finite("GMRES matrix-vector product", w)
                     # h_{0,0} = v_0^T * w
-                    h_00 = torch.sum(v_0 * w, dim=1, keepdim=True)     # (bs, 1)
+                    h_00 = torch.sum(v_0 * w, dim=1, keepdim=True)  # (bs, 1)
                     # w_perp = w - h_{0,0} * v_0
-                    w_perp = w - h_00 * v_0                            # (bs, N)
+                    w_perp = w - h_00 * v_0  # (bs, N)
                     # h_{1,0} = ||w_perp||
-                    h_10 = torch.norm(w_perp, dim=1, keepdim=True)     # (bs, 1)
+                    h_10 = torch.norm(w_perp, dim=1, keepdim=True)  # (bs, 1)
                     # y = (h_00 * beta) / (h_00^2 + h_10^2 + eps)
-                    y_opt = (h_00 * beta) / (h_00**2 + h_10**2 + eps_gmres) # (bs, 1)
-                    vv = v_0 * y_opt                                   # (bs, N)
+                    y_opt = (h_00 * beta) / (h_00 ** 2 + h_10 ** 2 + eps_gmres)  # (bs, 1)
+                    vv = v_0 * y_opt  # (bs, N)
                     require_finite("GMRES solution", vv)
                     # ==========================================
 
                     final_vjp_input = vv.view(1, -1).view_as(img)  # (1 -1)
                     score_y_given_x = torch.autograd.grad(
-                            outputs=x_0_hat,
-                            inputs=img,
-                            grad_outputs=final_vjp_input,
-                            retain_graph=True
+                        outputs=x_0_hat,
+                        inputs=img,
+                        grad_outputs=final_vjp_input,
+                        retain_graph=True
                     )[0]  #
 
                 nabla_r_xt = score_y_given_x
@@ -1206,8 +1215,8 @@ class GaussianDiffusion:
                 x_hat1 = (x_t + b2_t * nabla_xt_r) / a_t
                 x_B_post = x_hat1.view(tau_r.shape)
                 v_B_post_tensor = (
-                    (b2_t / a_t ** 2)
-                    - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)
+                        (b2_t / a_t ** 2)
+                        - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)
                 )
                 v_B_post_tensor = torch.clamp(
                     v_B_post_tensor, min=variance_min, max=variance_max
@@ -1233,7 +1242,7 @@ class GaussianDiffusion:
                     1.0 / safe_precision_B_ext, min=variance_min, max=variance_max
                 )
                 x_B_ext_candidate = v_B_ext * (
-                    x_B_post / v_B_post - x_B_pri / v_B_pri
+                        x_B_post / v_B_post - x_B_pri / v_B_pri
                 )
                 valid_B_mean = valid_B_ext & torch.isfinite(x_B_ext_candidate).all()
                 x_B_ext = torch.where(valid_B_mean, x_B_ext_candidate, x_B_post)
@@ -1314,11 +1323,12 @@ class GaussianDiffusion:
 
         img = x_start
         num_cm_steps = len(model.sigmas)
-        pbar = tqdm(list(range(num_cm_steps)))
+        pbar = tqdm(list(range(num_cm_steps - 1)))
 
         delta2_0 = noise_std ** 2
         s2 = H_funcs._S_small ** 2
-        delta = 1.0
+        delta = 1
+        rho_A = 1
         variance_min = 1e-15
         variance_max = 1e15
         precision_min = 1.0 / variance_max
@@ -1334,15 +1344,21 @@ class GaussianDiffusion:
         #     print("s2:", s2)
         #     raise ValueError("CM-VAMP closed-form Module A requires a row-orthonormal matrix (A A^T = I).")
 
-        v_A_pri_temp = 100*x_start.new_ones(1)
+        v_A_pri_temp = 100 * x_start.new_ones(1)
         x_A_pri_temp = x_start.new_zeros(H_funcs.block_num, H_funcs.M)
         y = measurement.view(H_funcs.block_num, H_funcs.N)
         bs = H_funcs.block_num
         M = H_funcs.N
         N = H_funcs.M
-            
-        v_A_ext_old = x_start.new_ones(1)
+
+        v_A_ext_old = 100 * x_start.new_ones(1)
         x_A_ext_old = x_start.new_zeros(H_funcs.block_num, H_funcs.M)
+        x_B_ext_old = x_A_pri_temp.detach().clone()
+        v_B_ext_old = torch.clamp(
+            v_A_pri_temp.detach().clone(),
+            min=variance_min,
+            max=variance_max,
+        )
 
         for loop_idx in pbar:
             sigma = model.get_sigma(loop_idx, device=img.device, dtype=img.dtype)
@@ -1357,8 +1373,6 @@ class GaussianDiffusion:
             x_A_pri = x_A_pri_temp
 
             Turbo = 3
-            # if loop_idx < 4:
-            #     Turbo = 4
 
             for i in range(Turbo):
                 with torch.no_grad():
@@ -1378,13 +1392,15 @@ class GaussianDiffusion:
                     # u = b / lmmse_denom
 
                     b = y - H_funcs.H(x_A_pri.view(1, -1)).view(bs, M)
+
                     def M_product(p):
                         # M = v_A_pri * A * A^T + delta2_0 * I
                         temp = H_funcs.H(H_funcs.Ht(p.view(1, -1))).view(bs, M)
                         return v_A_pri * temp + delta2_0 * p
                         # CG M * u = b
+
                     u = torch.zeros_like(b)
-                    r = b # - M_product(u) = 0
+                    r = b  # - M_product(u) = 0
                     p = r.clone()
                     cg_iters = 1
                     for _ in range(cg_iters):
@@ -1409,7 +1425,7 @@ class GaussianDiffusion:
                     denom = torch.clamp(denom, min=1e-8)
                     v_A_ext = 1.0 / denom
                     x_A_ext = v_A_ext * (
-                        x_A_post / v_A_post - x_A_pri / v_A_pri
+                            x_A_post / v_A_post - x_A_pri / v_A_pri
                     )
                     require_finite("x_A_ext", x_A_ext)
                     require_finite("v_A_ext", v_A_ext)
@@ -1419,6 +1435,7 @@ class GaussianDiffusion:
                     require_finite("x_B_pri", x_B_pri)
                     require_finite("v_B_pri", v_B_pri)
                     x_A_ext_old, v_A_ext_old = x_A_ext, v_A_ext
+                    tau_r = v_B_pri * torch.ones_like(x_B_pri)
 
                     # ---------------------------------------------------------
                     # 2. Diffusion-prior estimator (Module B)
@@ -1450,8 +1467,8 @@ class GaussianDiffusion:
                     w_perp = w - h_00 * v_0
                     h_10 = torch.norm(w_perp, dim=1, keepdim=True)
                     y_opt = (
-                        (h_00 * beta)
-                        / (h_00**2 + h_10**2 + eps_gmres)
+                            (h_00 * beta)
+                            / (h_00 ** 2 + h_10 ** 2 + eps_gmres)
                     )
                     vv = v_0 * y_opt
                     require_finite("GMRES solution", vv)
@@ -1467,17 +1484,13 @@ class GaussianDiffusion:
                 nabla_r_xt = score_y_given_x
                 del final_vjp_input
 
-                tau_r = v_B_pri * torch.ones_like(x_B_pri)
-                nabla_xt_r = (
-                    (a_t * x_0_hat - x_t) / b2_t
-                    + nabla_r_xt.view_as(img)
-                )
+                nabla_xt_r = (a_t * x_0_hat - x_t) / b2_t + nabla_r_xt.view_as(img)
                 x_hat1_raw = (x_t + b2_t * nabla_xt_r) / a_t
                 correction_damping = getattr(model, "correction_damping", 1.0)
                 x_hat1 = x_0_hat + correction_damping * (x_hat1_raw - x_0_hat)
                 x_B_post = x_hat1.view(tau_r.shape)
 
-                if i < Turbo and Turbo >= 1:
+                if i < 1 and Turbo >= 1:  # if i < 1 and Turbo >= 1:
                     vx = torch.randn_like(x_t)
                     hvp = torch.autograd.grad(
                         outputs=nabla_xt_r,
@@ -1487,8 +1500,8 @@ class GaussianDiffusion:
                     )[0]
                     trace_H = vx * hvp
 
-                if i < Turbo:
-                    v_B_post_tensor = (b2_t / a_t**2) + (b2_t**2 / a_t**2) * trace_H
+                if i < Turbo:  # i < Turbo:
+                    v_B_post_tensor = (b2_t / a_t ** 2) + (b2_t ** 2 / a_t ** 2) * trace_H
                 else:
                     v_B_post_tensor = (b2_t / a_t ** 2) - (b2_t ** 2 / a_t ** 2) / ((a_t ** 2) * tau_r + b2_t)
                     v_B_post_tensor = v_B_post_tensor * getattr(model, "tau_inflation", 1.0)
@@ -1502,22 +1515,22 @@ class GaussianDiffusion:
                 del nabla_r_xt
 
                 v_B_post = torch.mean(v_B_post_tensor)
-                v_B_post = torch.clamp(
-                    v_B_post, min=variance_min, max=variance_max
-                )
-                v_B_pri = torch.clamp(
-                    v_B_pri, min=variance_min, max=variance_max
-                )
+                # v_B_post = torch.clamp(
+                #     v_B_post, min=variance_min, max=variance_max
+                # )
+                # v_B_pri = torch.clamp(
+                #     v_B_pri, min=variance_min, max=variance_max
+                # )
                 require_finite("v_B_post", v_B_post)
                 require_finite("v_B_pri before extrinsic update", v_B_pri)
 
                 precision_B_ext = 1.0 / v_B_post - 1.0 / v_B_pri
                 valid_B_ext = (
-                    torch.isfinite(precision_B_ext)
-                    & (precision_B_ext > precision_min)
+                        torch.isfinite(precision_B_ext)
+                        & (precision_B_ext > precision_min)
                 )
                 safe_precision_B_ext = torch.where(
-                    valid_B_ext, precision_B_ext, 1.0 / v_B_pri
+                    valid_B_ext, precision_B_ext, 1.0 / v_B_ext_old
                 )
                 v_B_ext = torch.clamp(
                     1.0 / safe_precision_B_ext,
@@ -1525,24 +1538,28 @@ class GaussianDiffusion:
                     max=variance_max
                 )
                 x_B_ext_candidate = v_B_ext * (
-                    x_B_post / v_B_post - x_B_pri / v_B_pri
+                        x_B_post / v_B_post - x_B_pri / v_B_pri
                 )
                 valid_B_mean = (
-                    valid_B_ext & torch.isfinite(x_B_ext_candidate).all()
+                        valid_B_ext & torch.isfinite(x_B_ext_candidate).all()
                 )
                 x_B_ext = torch.where(
-                    valid_B_mean, x_B_ext_candidate, x_B_post
+                    valid_B_mean, x_B_ext_candidate, x_B_ext_old
                 )
                 require_finite("x_B_ext", x_B_ext)
                 require_finite("v_B_ext", v_B_ext)
 
-                x_A_pri = x_B_ext
-                v_A_pri = v_B_ext
+                x_B_ext_old = x_B_ext.detach()
+                v_B_ext_old = v_B_ext.detach()
 
-            v_A_pri_temp = v_A_pri
-            x_A_pri_temp = x_A_pri
+                with torch.no_grad():
+                    x_A_pri = rho_A * x_B_ext.detach() + (1 - rho_A) * x_A_pri.detach()
+                    v_A_pri = rho_A * v_B_ext.detach() + (1 - rho_A) * v_A_pri.detach()
 
-            if loop_idx < num_cm_steps - 1:
+            x_A_pri_temp = x_A_pri.detach()
+            v_A_pri_temp = v_A_pri.detach()
+
+            if loop_idx < num_cm_steps - 2:
                 sigma_next = model.get_sigma(
                     loop_idx + 1, device=img.device, dtype=img.dtype
                 )
@@ -1551,8 +1568,8 @@ class GaussianDiffusion:
                     torch.clamp(sigma_next ** 2 - 0.002 ** 2, min=0.0)
                 )
                 img = (
-                    a_next * x_hat1.detach()
-                    + a_next * noise_scale * torch.randn_like(x_hat1)
+                        a_next * x_hat1.detach()
+                        + a_next * noise_scale * torch.randn_like(x_hat1)
                 )
             else:
                 img = x_hat1.detach()
@@ -1570,18 +1587,414 @@ class GaussianDiffusion:
 
         return img
 
+    def _step_Tvamp_cm(self,
+                       model,
+                       x_start,
+                       measurement,
+                       H_funcs,
+                       noise_std,
+                       record,
+                       save_root,
+                       alg_name,
+                       obs_module=None):
+        """
+        CM-prior version of VAMP.
+
+        This keeps the Module-A/Module-B structure from _step_vamp(...),
+        but obtains the differentiable endpoint from the consistency model
+        and advances between CM sigma levels with VP re-noising.
+        """
+        if obs_module is not None:
+            raise NotImplementedError(
+                "CM-VAMP with non-differentiable observation is not yet implemented. "
+                "Use a GAMP-based algorithm instead (e.g., gamp_mm)."
+            )
+        # if alg_name != 'vamp':
+        #     raise NotImplementedError("CM-VAMP is implemented only for algorithm name 'vamp'.")
+
+        img = x_start
+        num_cm_steps = len(model.sigmas)
+        pbar = tqdm(list(range(num_cm_steps - 1)))
+        model.model.requires_grad_(False)  #####
+
+        delta2_0 = noise_std ** 2
+        s2 = H_funcs._S_small ** 2
+        delta = 0.75
+        rho_A = 0.8
+        variance_min = 1e-15
+        variance_max = 1e15
+        precision_min = 1.0 / variance_max
+
+        def require_finite(name, value):
+            if not torch.isfinite(value).all():
+                raise FloatingPointError(
+                    f"CM-VAMP produced a non-finite value in {name} at CM step {loop_idx}."
+                )
+
+        # # BlockCS_H selects rows from an orthonormal DCT matrix, so A A^T = I.
+        # if not torch.allclose(s2, torch.ones_like(s2), rtol=1e-4, atol=1e-5):
+        #     print("s2:", s2)
+        #     raise ValueError("CM-VAMP closed-form Module A requires a row-orthonormal matrix (A A^T = I).")
+
+        v_A_pri_temp = 1 * x_start.new_ones(1)
+        x_A_pri_temp = x_start.new_zeros(H_funcs.block_num, H_funcs.M)
+        y = measurement.view(H_funcs.block_num, H_funcs.N)
+        bs = H_funcs.block_num
+        M = H_funcs.N
+        N = H_funcs.M
+
+        v_A_ext_old = x_start.new_ones(1)
+        x_A_ext_old = x_start.new_zeros(H_funcs.block_num, H_funcs.M)
+        x_B_ext_old = x_A_pri_temp.detach().clone()
+        v_B_ext_old = torch.clamp(
+            v_A_pri_temp.detach().clone(),
+            min=variance_min,
+            max=variance_max,
+        )
+
+        for loop_idx in pbar:
+            sigma = model.get_sigma(loop_idx, device=img.device, dtype=img.dtype)
+
+            img = img.requires_grad_()
+
+            v_A_pri = v_A_pri_temp
+            x_A_pri = x_A_pri_temp
+
+            Turbo = 10
+
+            for i in range(Turbo):
+                with torch.no_grad():
+
+                    b = y - H_funcs.H(x_A_pri.view(1, -1)).view(bs, M)
+
+                    def M_product(p):
+                        # M = v_A_pri * A * A^T + delta2_0 * I
+                        temp = H_funcs.H(H_funcs.Ht(p.view(1, -1))).view(bs, M)
+                        return v_A_pri * temp + delta2_0 * p
+                        # CG M * u = b
+
+                    u = torch.zeros_like(b)
+                    r = b  # - M_product(u) = 0
+                    p = r.clone()
+                    cg_iters = 1
+                    for _ in range(cg_iters):
+                        Mp = M_product(p)
+                        r_dot_r = torch.sum(r * r, dim=1, keepdim=True)
+                        alpha = r_dot_r / (torch.sum(p * Mp, dim=1, keepdim=True) + 1e-12)
+                        u = u + alpha * p
+                        r_new = r - alpha * Mp
+                        beta = torch.sum(r_new * r_new, dim=1, keepdim=True) / (r_dot_r + 1e-12)
+                        p = r_new + beta * p
+                        r = r_new
+
+                    x_A_post = x_A_pri + v_A_pri * H_funcs.Ht(u.view(1, -1)).view(bs, N)
+                    tr_term = torch.sum(s2 / (v_A_pri * s2 + delta2_0))
+                    v_A_post = v_A_pri - (v_A_pri ** 2 / N) * tr_term
+                    v_A_post = torch.clamp(v_A_post, min=variance_min, max=variance_max)
+                    require_finite("x_A_post", x_A_post)
+                    require_finite("v_A_post", v_A_post)
+
+                    denom = 1.0 / v_A_post - 1.0 / v_A_pri
+                    require_finite("Module-A extrinsic precision", denom)
+                    denom = torch.clamp(denom, min=1e-8)
+                    v_A_ext = 1.0 / denom
+                    x_A_ext = v_A_ext * (
+                            x_A_post / v_A_post - x_A_pri / v_A_pri
+                    )
+                    require_finite("x_A_ext", x_A_ext)
+                    require_finite("v_A_ext", v_A_ext)
+
+                    x_B_pri = x_A_ext * delta + x_A_ext_old * (1 - delta)
+                    v_B_pri = v_A_ext * delta + v_A_ext_old * (1 - delta)
+                    require_finite("x_B_pri", x_B_pri)
+                    require_finite("v_B_pri", v_B_pri)
+                    x_A_ext_old, v_A_ext_old = x_A_ext, v_A_ext
+                    tau_r = v_B_pri * torch.ones_like(x_B_pri)
+
+                    # Treat the Module-B input as r_B = x + N(0, tau_B I),
+                    # and evaluate the CM endpoint at its matched noise level.
+                    # tau_B = torch.clamp(
+                    #     v_B_pri.detach(),
+                    #     min=model.diffusion.sigma_min ** 2,
+                    #     max=model.diffusion.sigma_max ** 2,
+                    # )
+                    tau_B = v_B_pri.detach()
+                    sigma_B = torch.sqrt(tau_B)
+                    a_B, _ = model.vp_coeffs(sigma_B)
+
+                    # A local input graph is required only for the denoiser
+                    # VJP; CM parameters remain frozen and sigma_B is fixed.
+                    with torch.enable_grad():
+                        r_B = (
+                            x_B_pri.detach()
+                            .view_as(img)
+                            .clone()
+                            .requires_grad_(True)
+                        )
+                        x_B_vp = a_B * r_B
+                        x_hat1_graph = model.endpoint_from_vp(x_B_vp, sigma_B)
+
+                        # Rademacher Hutchinson estimate:
+                        # E[z * (J_D^T z)] = diag(J_D).
+                        probe_B = torch.empty_like(r_B).bernoulli_(0.5)
+                        probe_B = probe_B.mul_(2.0).sub_(1.0)
+                        vjp_B = torch.autograd.grad(
+                            outputs=x_hat1_graph,
+                            inputs=r_B,
+                            grad_outputs=probe_B,
+                            retain_graph=False,
+                            create_graph=False,
+                            only_inputs=True,
+                        )[0]
+                        v_B_post_tensor = (
+                                tau_B * probe_B * vjp_B
+                        ).view_as(tau_r)
+
+                    x_hat1 = x_hat1_graph.detach()
+
+                x_B_post = x_hat1.view(tau_r.shape)
+
+                # v_B_post_tensor = torch.clamp(
+                #     v_B_post_tensor, min=variance_min, max=variance_max
+                # )
+                require_finite("x_B_post", x_B_post)
+                require_finite("v_B_post_tensor", v_B_post_tensor)
+
+                v_B_post = torch.mean(v_B_post_tensor)
+                ####### Important: Clamp v_B_post and v_B_pri to avoid numerical issues
+                v_B_post = torch.clamp(
+                    v_B_post, min=variance_min, max=variance_max
+                )
+                v_B_pri = torch.clamp(
+                    v_B_pri, min=variance_min, max=variance_max
+                )
+                require_finite("v_B_post", v_B_post)
+                require_finite("v_B_pri before extrinsic update", v_B_pri)
+
+                precision_B_ext = 1.0 / v_B_post - 1.0 / v_B_pri
+                valid_B_ext = (
+                        torch.isfinite(precision_B_ext)
+                        & (precision_B_ext > precision_min)
+                )
+                safe_precision_B_ext = torch.where(
+                    valid_B_ext, precision_B_ext, 1.0 / v_B_ext_old
+                )
+                v_B_ext = torch.clamp(
+                    1.0 / safe_precision_B_ext,
+                    min=variance_min,
+                    max=variance_max
+                )
+                x_B_ext_candidate = v_B_ext * (
+                        x_B_post / v_B_post - x_B_pri / v_B_pri
+                )
+                valid_B_mean = (
+                        valid_B_ext & torch.isfinite(x_B_ext_candidate).all()
+                )
+                x_B_ext = torch.where(
+                    valid_B_mean, x_B_ext_candidate, x_B_ext_old
+                )
+                require_finite("x_B_ext", x_B_ext)
+                require_finite("v_B_ext", v_B_ext)
+
+                x_B_ext_old = x_B_ext.detach()
+                v_B_ext_old = v_B_ext.detach()
+
+                with torch.no_grad():
+                    x_A_pri = rho_A * x_B_ext.detach() + (1 - rho_A) * x_A_pri.detach()
+                    v_A_pri = rho_A * v_B_ext.detach() + (1 - rho_A) * v_A_pri.detach()
+
+            x_A_pri_temp = x_A_pri.detach()
+            v_A_pri_temp = v_A_pri.detach()
+
+            img = x_hat1.detach()
+
+            pbar.set_postfix({'sigma': sigma.item()}, refresh=False)
+            if record:
+                file_path = os.path.join(
+                    save_root,
+                    f"progress/x_cm_vamp_{str(loop_idx).zfill(4)}.png"
+                )
+                plt.imsave(file_path, clear_color(img))
+
+            torch.cuda.empty_cache()
+
+        return img
+
+    def _step_Tgamp_cm(self,
+                       model,
+                       x_start,
+                       measurement,
+                       H_funcs,
+                       noise_std,
+                       record,
+                       save_root,
+                       alg_name,
+                       obs_module=None):
+        """
+        Turbo GAMP with a consistency-model denoiser.
+
+        This keeps the original GAMP output/input-step structure, but directly
+        treats the GAMP effective observation r as an AWGN-corrupted observation
+        of x_0 and uses the consistency model as the input denoiser.
+
+        There is no external diffusion/consistency sampling or VP re-noising.
+        """
+
+        img = x_start
+        device = x_start.device
+
+        self.old_x_0_listhat = []
+
+        # model.sigmas is used only to retain the original number of outer rounds.
+        # It is not used as an external consistency-sampling schedule.
+        num_iterations = len(model.sigmas)
+        pbar = tqdm(list(range(num_iterations - 1)))
+
+        x_hat_temp = torch.zeros(H_funcs.block_num, H_funcs.M, device=device, )
+        tau_x_temp = torch.ones(H_funcs.block_num, H_funcs.M, device=device, )
+        s_temp = torch.zeros(H_funcs.block_num, H_funcs.N, device=device, )
+        y = measurement.view(H_funcs.block_num, H_funcs.N, )
+
+        noise_sigma = noise_std
+        delta0 = noise_sigma ** 2
+        bs = H_funcs.block_num
+        M = H_funcs.N
+        N = H_funcs.M
+        rho_cm = 0.5  #
+        # CM parameters remain frozen. Gradients are required only
+        # with respect to the local denoiser input r_B.
+        model.model.requires_grad_(False)
+
+        for loop_idx in pbar:
+
+            # Carry the GAMP states over between outer rounds.
+            x_hat = x_hat_temp
+            tau_x = tau_x_temp
+            s = s_temp
+
+            max_iter = 12
+
+            for iter in range(max_iter):
+                with torch.no_grad():
+                    # ----------------------------------------------------------
+                    # GAMP output step
+                    # ----------------------------------------------------------
+                    if iter == 0:
+                        tau_p = H_funcs.H_squared(tau_x.view(1, -1)).view(bs, M)
+
+                    p = (H_funcs.H(x_hat.view(1, -1)).view(bs, M) - s * tau_p)
+
+                    if obs_module is not None:
+                        z_hat, tau_z = obs_module.gamp_likelihood(p, tau_p, y, noise_sigma, )
+                    else:
+                        tau_p_safe = torch.clamp(tau_p, min=1e-15, )
+                        tau_z = 1.0 / (1.0 / tau_p_safe + 1.0 / delta0)
+                        z_hat = (p / tau_p_safe + y / delta0) * tau_z
+
+                    tau_p_clamped = torch.clamp(tau_p, min=1e-10, )
+                    s = (z_hat - p) / tau_p_clamped
+                    tau_s = (1.0 - tau_z / tau_p_clamped) / tau_p_clamped
+                    tau_s = torch.clamp(tau_s, min=1e-10, )
+
+                    # ----------------------------------------------------------
+                    # GAMP input effective observation
+                    # ----------------------------------------------------------
+                    A2_tau_s = H_funcs.Ht_squared(tau_s.view(1, -1)).view(bs, N)
+                    tau_r = 1.0 / torch.clamp(A2_tau_s, min=1e-10, )
+                    At_s = H_funcs.Ht(s.view(1, -1)).view(bs, N)
+                    r = x_hat + tau_r * At_s
+
+                # --------------------------------------------------------------
+                # CM input denoiser
+                # --------------------------------------------------------------
+                # The GAMP effective variance is coordinate-wise, while the CM
+                # accepts one scalar noise level. Use its spatial average.
+                tau_B = torch.mean(tau_r).detach()
+                tau_B = torch.clamp(tau_B, min=1e-15, max=1e8, )
+                sigma_B = torch.sqrt(tau_B)
+                a_B, _ = model.vp_coeffs(sigma_B)
+
+                with torch.enable_grad():
+
+                    r_B = (r.detach().view_as(img).clone().requires_grad_(True))
+                    x_B_vp = a_B * r_B
+                    x_hat_graph = model.endpoint_from_vp(x_B_vp, sigma_B, )
+                    # Rademacher Hutchinson estimate:
+                    #
+                    #     diag(J_D) ≈ z ⊙ J_D^T z.
+                    #
+                    # This provides the coordinate-wise effective variance
+                    # required by the GAMP input step.
+                    probe_B = torch.empty_like(r_B).bernoulli_(0.5)
+                    probe_B = (probe_B.mul_(2.0).sub_(1.0))
+                    vjp_B = torch.autograd.grad(
+                        outputs=x_hat_graph,
+                        inputs=r_B,
+                        grad_outputs=probe_B,
+                        retain_graph=False,
+                        create_graph=False,
+                        only_inputs=True,
+                    )[0]
+                    tau_x_graph = (tau_B * probe_B * vjp_B)
+                    tau_x_scalar = torch.clamp(torch.mean(tau_x_graph), min=1e-10, max=1e8, )
+                    tau_x_graph = torch.full_like(tau_x_graph, tau_x_scalar, )
+
+                # GAMP input posterior mean.
+                # Raw CM input-step estimates.
+                x_hat_new = x_hat_graph.detach().view(bs, N)
+                tau_x_new = tau_x_graph.detach().view(bs, N)
+                tau_x_new = torch.clamp(tau_x_new, min=1e-10, max=1e8, )
+                # Joint damping of the input-step mean and variance.
+                x_hat = rho_cm * x_hat_new + (1.0 - rho_cm) * x_hat
+                tau_x = rho_cm * tau_x_new + (1.0 - rho_cm) * tau_x
+                tau_x = torch.clamp(tau_x, min=1e-10, max=1e8, )
+
+                # Prepare tau_p for the next GAMP iteration.
+                tau_p = H_funcs.H_squared(tau_x.view(1, -1)).view(bs, M)
+
+                del (p, z_hat, tau_p_clamped, tau_s, A2_tau_s, At_s, r, r_B, x_B_vp, x_hat_graph,
+                     probe_B, vjp_B, tau_x_graph,)
+
+            # Carry all original GAMP states to the next outer round.
+            x_hat_temp = x_hat.detach()
+            tau_x_temp = tau_x.detach()
+            s_temp = s.detach()
+
+            # No external consistency sampling or VP re-noising.
+            img = x_hat.view_as(img).detach()
+            pbar.set_postfix(
+                {
+                    'sigma_B': sigma_B.item(),
+                    'maxiter': max_iter,
+                },
+                refresh=False,
+            )
+            if record:
+                file_path = os.path.join(
+                    save_root,
+                    f"progress/x_Tgamp_cm_{str(loop_idx).zfill(4)}.png",
+                )
+                plt.imsave(
+                    file_path,
+                    clear_color(img),
+                )
+
+            torch.cuda.empty_cache()
+
+        return img
+
     def p_sample_loop_cs(self,
-                      model,
-                      x_start,
-                      measurement,
-                      measurement_cond_fn,
-                      H_funcs=None,
-                      noise_std=0.1,
-                      config=None,
-                      record=False,
-                      save_root=None,
-                      diffusion_sampler = 'mmps',
-                      obs_module=None):
+                         model,
+                         x_start,
+                         measurement,
+                         measurement_cond_fn,
+                         H_funcs=None,
+                         noise_std=0.1,
+                         config=None,
+                         record=False,
+                         save_root=None,
+                         diffusion_sampler='mmps',
+                         obs_module=None):
 
         # alg_name
         alg_config = config.get('algorithm', {})
@@ -1595,33 +2008,41 @@ class GaussianDiffusion:
             elif alg_name == 'vamp':
                 img = self._step_vamp_cm(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
                                          obs_module=obs_module)
+            elif alg_name == 'Tvamp':
+                img = self._step_Tvamp_cm(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
+                                          obs_module=obs_module)
+            elif alg_name == 'Tgamp':
+                img = self._step_Tgamp_cm(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
+                                          obs_module=obs_module)
             elif alg_name == 'cm_mmps':
                 img = self._step_cm_mmps(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
                                          obs_module=obs_module)
             else:
-                raise NotImplementedError("CM prior supports only 'gamp_mm', 'vamp', and 'cm_mmps'.")
+                raise NotImplementedError("CM prior supports only 'gamp_mm', 'vamp', 'Tvamp', 'Tgamp', and 'cm_mmps'.")
         elif 'gamp' in alg_name:
-            img = self._step_gamp(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name, diffusion_sampler, obs_module=obs_module)
+            img = self._step_gamp(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
+                                  diffusion_sampler, obs_module=obs_module)
         elif 'vamp' in alg_name:
-            img = self._step_vamp(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name, diffusion_sampler, obs_module=obs_module)
+            img = self._step_vamp(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
+                                  diffusion_sampler, obs_module=obs_module)
         else:
-            img = self._step_mmps(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name, diffusion_sampler, obs_module=obs_module)
+            img = self._step_mmps(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
+                                  diffusion_sampler, obs_module=obs_module)
 
         return img
-
 
     def p_sample(self, model, x, t):
         raise NotImplementedError
 
     def p_mean_variance(self, model, x, t):
         model_output = model(x, self._scale_timesteps(t))
-        
+
         # In the case of "learned" variance, model will give twice channels.
         if model_output.shape[1] == 2 * x.shape[1]:
             model_output, model_var_values = torch.split(model_output, x.shape[1], dim=1)
         else:
-            # The name of variable is wrong. 
-            # This will just provide shape information, and 
+            # The name of variable is wrong.
+            # This will just provide shape information, and
             # will not be used for calculating something important in variance.
             model_var_values = model_output
 
@@ -1635,11 +2056,11 @@ class GaussianDiffusion:
                 'log_variance': model_log_variance,
                 'pred_xstart': pred_xstart}
 
-    
     def _scale_timesteps(self, t):
         if self.rescale_timesteps:
             return t.float() * (1000.0 / self.num_timesteps)
         return t
+
 
 def space_timesteps(num_timesteps, section_counts):
     """
@@ -1662,7 +2083,7 @@ def space_timesteps(num_timesteps, section_counts):
     """
     if isinstance(section_counts, str):
         if section_counts.startswith("ddim"):
-            desired_count = int(section_counts[len("ddim") :])
+            desired_count = int(section_counts[len("ddim"):])
             for i in range(1, num_timesteps):
                 if len(range(0, num_timesteps, i)) == desired_count:
                     return set(range(0, num_timesteps, i))
@@ -1672,7 +2093,7 @@ def space_timesteps(num_timesteps, section_counts):
         section_counts = [int(x) for x in section_counts.split(",")]
     elif isinstance(section_counts, int):
         section_counts = [section_counts]
-    
+
     size_per = num_timesteps // len(section_counts)
     extra = num_timesteps % len(section_counts)
     start_idx = 0
@@ -1722,12 +2143,12 @@ class SpacedDiffusion(GaussianDiffusion):
         super().__init__(**kwargs)
 
     def p_mean_variance(
-        self, model, *args, **kwargs
+            self, model, *args, **kwargs
     ):  # pylint: disable=signature-differs
         return super().p_mean_variance(self._wrap_model(model), *args, **kwargs)
 
     def training_losses(
-        self, model, *args, **kwargs
+            self, model, *args, **kwargs
     ):  # pylint: disable=signature-differs
         return super().training_losses(self._wrap_model(model), *args, **kwargs)
 
@@ -1775,7 +2196,8 @@ class DDPM(SpacedDiffusion):
             sample += torch.exp(0.5 * out['log_variance']) * noise
 
         return {'sample': sample, 'pred_xstart': out['pred_xstart'], 'log_variance': out['log_variance']}
-    
+
+
 @register_sampler(name="ddim")
 class DDIM(SpacedDiffusion):
     def __init__(self, eta=1.0, **kwargs):
@@ -1791,9 +2213,9 @@ class DDIM(SpacedDiffusion):
             sigma = 0
         else:
             sigma = (
-                self.eta
-                * torch.sqrt((1 - alpha_s) / (1 - alpha_t))
-                * torch.sqrt(1 - alpha_t / alpha_s)
+                    self.eta
+                    * torch.sqrt((1 - alpha_s) / (1 - alpha_t))
+                    * torch.sqrt(1 - alpha_t / alpha_s)
             )
 
         out = self.p_mean_variance(model, x, t)
@@ -1801,12 +2223,12 @@ class DDIM(SpacedDiffusion):
         x_0 = out["pred_xstart"]
         eps = (x - torch.sqrt(alpha_t) * x_0) / torch.sqrt(1 - alpha_t)
         x_s = (
-            torch.sqrt(alpha_s) * x_0
-            + torch.sqrt(1 - alpha_s - sigma**2) * eps
-            + sigma * torch.randn_like(x_0)
+                torch.sqrt(alpha_s) * x_0
+                + torch.sqrt(1 - alpha_s - sigma ** 2) * eps
+                + sigma * torch.randn_like(x_0)
         )
 
-        scale = torch.sqrt(alpha_s) - torch.sqrt(1 - alpha_s - sigma**2) * torch.sqrt(
+        scale = torch.sqrt(alpha_s) - torch.sqrt(1 - alpha_s - sigma ** 2) * torch.sqrt(
             alpha_t
         ) / torch.sqrt(1 - alpha_t)
 
@@ -1817,6 +2239,7 @@ class DDIM(SpacedDiffusion):
             "alpha_prev": alpha_t,
             "scale": scale,
         }
+
 
 @register_sampler(name='dpmsolver++')
 class DPM_Solver_plus(SpacedDiffusion):
@@ -1884,6 +2307,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
         betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
     return np.array(betas)
 
+
 # ================
 # Helper function
 # ================
@@ -1900,7 +2324,7 @@ def expand_as(array, target):
         array = torch.from_numpy(array)
     elif isinstance(array, np.float):
         array = torch.tensor([array])
-   
+
     while array.ndim < target.ndim:
         array = array.unsqueeze(-1)
 
