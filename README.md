@@ -24,20 +24,6 @@ Algorithms are selected with `algorithm.name` in the task configuration. Names a
 
 Non-differentiable observations cannot be used with MMPS, PGDM, DPS, or VAMP. The supplied quantized-CS configurations therefore use `gamp_mm`.
 
-## Method overview
-
-For each reference image, the pipeline:
-
-1. Builds a block measurement matrix from randomly signed and selected DCT rows.
-2. Generates `y = Ax + n`, with optional element-wise quantization.
-3. Predicts a clean endpoint with a DDPM/DDIM model or an OpenAI CM prior.
-4. Applies the selected MMPS, DPS, GAMP, or VAMP correction.
-5. Advances through the diffusion timesteps or CM noise levels and saves the reconstruction.
-
-`guided_diffusion/gaussian_diffusion.py` is the central implementation. It contains the diffusion schedules and DDPM/DDIM samplers, the CS algorithm dispatcher, GAMP output/input updates, VAMP Module-A/Module-B updates, CM coordinate conversion and re-noising, and the experimental CM-GAMP/VAMP variants.
-
-For quantized measurements, `QuantizedObservation` replaces the Gaussian GAMP output likelihood with element-wise numerical posterior integration while leaving the prior update unchanged.
-
 ## Installation
 
 The original environment uses Python 3.8, PyTorch 1.11, and CUDA 11.3. A CUDA-capable GPU is strongly recommended.
