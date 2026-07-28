@@ -918,13 +918,13 @@ class GaussianDiffusion:
             tau_x = tau_x_temp
             tau_x_new = tau_x_temp
             s = s_temp
-            if loop_idx < 10:
-                progress = (loop_idx / 40)  #
-                max_iter = 3  # int(2 + 3 * (progress ** 2)) #
-            else:
-                max_iter = 3
+            # if loop_idx < 10:
+            #     progress = (loop_idx / 40) #
+            #     max_iter = 3 # int(2 + 3 * (progress ** 2)) #
+            # else:
+            #     max_iter = 3
 
-                # max_iter = 2
+            max_iter = 3
 
             for iter in range(max_iter):
                 with torch.no_grad():
@@ -1001,7 +1001,7 @@ class GaussianDiffusion:
                 x_hat1 = x_0_hat + correction_damping * (x_hat1_raw - x_0_hat)
                 x_hat_new = x_hat1.view(tau_r.shape)
 
-                if iter < max_iter and max_iter > 1:
+                if iter < 1 and max_iter > 1:
                     vx = torch.randn_like(x_t)
                     hvp = torch.autograd.grad(
                         outputs=nabla_xt_r,
@@ -1983,6 +1983,199 @@ class GaussianDiffusion:
 
         return img
 
+    def _step_cm_gamp_ps(self,
+                         model,
+                         x_start,
+                         measurement,
+                         H_funcs,
+                         noise_std,
+                         record,
+                         save_root,
+                         alg_name,
+                         obs_module=None):
+        """
+        Gaussian precision-fused CM-GAMP posterior sampling.
+        At each consistency-sampling time, GAMP provides an effective AWGN
+        observation
+            r = x_0 + N(0, tau_r I),
+        while the current VP diffusion state provides
+            q_t = x_t / a_t = x_0 + N(0, sigma_t^2 I).
+        The two Gaussian observations are fused and passed to the consistency
+        model as a single equivalent AWGN denoising problem. The outer
+        consistency-sampling and VP re-noising procedure is retained.
+        """
+
+        img = x_start
+        device = x_start.device
+
+        self.old_x_0_listhat = []
+
+        num_cm_steps = len(model.sigmas)
+        pbar = tqdm(list(range(num_cm_steps - 1)))
+
+        x_hat_temp = torch.zeros(H_funcs.block_num, H_funcs.M, device=device, )
+        tau_x_temp = torch.ones(H_funcs.block_num, H_funcs.M, device=device, )
+        s_temp = torch.zeros(H_funcs.block_num, H_funcs.N, device=device, )
+        y = measurement.view(H_funcs.block_num, H_funcs.N, )
+
+        noise_sigma = noise_std
+        delta0 = noise_sigma ** 2
+        bs = H_funcs.block_num
+        M = H_funcs.N
+        N = H_funcs.M
+        rho_cm = 0.7
+        # CM parameters are frozen. Gradients are required only with respect to the fused CM input for the Hutchinson VJP.
+        model.model.requires_grad_(False)
+
+        for loop_idx in pbar:
+            # --------------------------------------------------------------
+            # Current diffusion observation
+            # --------------------------------------------------------------
+            sigma = model.get_sigma(loop_idx, device=img.device, dtype=img.dtype, )
+            a_t, b2_t = model.vp_coeffs(sigma)
+            # x_t = a_t x_0 + b_t epsilon
+            x_t = img.detach()
+
+            # Normalize the VP state into an equivalent VE observation:
+            # q_t = x_t / a_t = x_0 + N(0, sigma_t^2 I).
+            q_t = x_t / a_t
+            sigma_t2 = torch.clamp(b2_t / (a_t ** 2), min=1e-15, max=1e8, )
+
+            # Carry the GAMP states across consistency-sampling steps.
+            x_hat = x_hat_temp
+            tau_x = tau_x_temp
+            s = s_temp
+
+            max_iter = 3
+
+            for iter in range(max_iter):
+                with torch.no_grad():
+                    # ------------------------------------------------------
+                    # GAMP output step
+                    # ------------------------------------------------------
+                    if iter == 0:
+                        tau_p = H_funcs.H_squared(tau_x.view(1, -1)).view(bs, M)
+
+                    p = H_funcs.H(x_hat.view(1, -1)).view(bs, M) - s * tau_p
+
+                    if obs_module is not None:
+                        z_hat, tau_z = obs_module.gamp_likelihood(p, tau_p, y, noise_sigma, )
+                    else:
+                        tau_p_safe = torch.clamp(tau_p, min=1e-15, )
+                        tau_z = 1.0 / (1.0 / tau_p_safe + 1.0 / delta0)
+                        z_hat = (p / tau_p_safe + y / delta0) * tau_z
+
+                    tau_p_clamped = torch.clamp(tau_p, min=1e-10, )
+                    s = (z_hat - p) / tau_p_clamped
+                    tau_s = (1.0 - tau_z / tau_p_clamped) / tau_p_clamped
+                    tau_s = torch.clamp(tau_s, min=1e-10, )
+
+                    # ------------------------------------------------------
+                    # GAMP input effective observation
+                    # ------------------------------------------------------
+                    A2_tau_s = H_funcs.Ht_squared(tau_s.view(1, -1)).view(bs, N)
+                    tau_r = 1.0 / torch.clamp(A2_tau_s, min=1e-10, )
+                    At_s = H_funcs.Ht(s.view(1, -1)).view(bs, N)
+                    r = x_hat + tau_r * At_s
+
+                # ----------------------------------------------------------
+                # Gaussian precision fusion
+                # ----------------------------------------------------------
+                # The proposition assumes a scalar tau_r. Since GAMP produces
+                # coordinate-wise tau_r, use its spatial average before fusion.
+                tau_r_scalar = torch.clamp(torch.mean(tau_r).detach(), min=1e-15, max=1e8, )
+
+                # Fused variance: v_c = (tau_r^{-1} + sigma_t^{-2})^{-1}.
+                tau_B = 1.0 / (1.0 / tau_r_scalar + 1.0 / sigma_t2)
+                tau_B = torch.clamp(tau_B, min=1e-15, max=1e8, )
+                # Fused mean: u_c = v_c (r / tau_r + q_t / sigma_t^2).
+                r_fused = tau_B * (r.detach() / tau_r_scalar + q_t.view(bs, N) / sigma_t2)
+
+                # ----------------------------------------------------------
+                # CM denoiser on the fused AWGN observation
+                # ----------------------------------------------------------
+                # r_fused is in VE/AWGN coordinates:  r_fused = x_0 + N(0, tau_B I).
+                # Convert it to the VP coordinates expected by the CM using
+                # the coefficient associated with the fused noise variance.
+                sigma_B = torch.sqrt(tau_B)
+                a_B, _ = model.vp_coeffs(sigma_B)
+                with torch.enable_grad():
+                    r_B = (r_fused.view_as(img).clone().requires_grad_(True))
+                    # Correct scale conversion:
+                    # VE observation r_B -> VP state a_B * r_B.
+                    # a_B corresponds to sigma_B = sqrt(tau_B), not to the
+                    # outer diffusion coefficient a_t.
+                    x_B_vp = a_B * r_B
+                    x_hat_graph = model.endpoint_from_vp(x_B_vp, sigma_B, )
+
+                    # Hutchinson estimate of the CM Jacobian response.
+                    probe_B = torch.empty_like(r_B).bernoulli_(0.5)
+                    probe_B = probe_B.mul_(2.0).sub_(1.0)
+                    vjp_B = torch.autograd.grad(
+                        outputs=x_hat_graph,
+                        inputs=r_B,
+                        grad_outputs=probe_B,
+                        retain_graph=False,
+                        create_graph=False,
+                        only_inputs=True,
+                    )[0]
+                    tau_x_graph = (tau_B * probe_B * vjp_B)
+                    # Use the scalar average response, consistent with the
+                    # scalar Gaussian fusion approximation.
+                    tau_x_scalar = torch.clamp(torch.mean(tau_x_graph), min=1e-10, max=1e8, )
+                    tau_x_graph = torch.full_like(tau_x_graph, tau_x_scalar, )
+
+                # Raw CM posterior-moment estimates.
+                x_hat1 = x_hat_graph.detach()
+                x_hat_new = x_hat1.view(bs, N)
+                tau_x_new = tau_x_graph.detach().view(bs, N)
+                tau_x_new = torch.clamp(tau_x_new, min=1e-10, max=1e8, )
+
+                # Preserve the original joint mean/variance damping.
+                with torch.no_grad():
+                    x_hat = rho_cm * x_hat_new.detach() + (1.0 - rho_cm) * x_hat.detach()
+                    tau_x = rho_cm * tau_x_new.detach() + (1.0 - rho_cm) * tau_x.detach()
+                    tau_x = torch.clamp(tau_x, min=1e-10, max=1e8, )
+
+                # Prepare the next GAMP output step.
+                tau_p = H_funcs.H_squared(tau_x.view(1, -1)).view(bs, M)
+
+                del (p, z_hat, tau_p_clamped, tau_s, A2_tau_s, At_s, r, r_fused, r_B, x_B_vp, x_hat_graph, probe_B,
+                     vjp_B, tau_x_graph,)
+
+            # Carry the GAMP states to the next diffusion time.
+            x_hat_temp = x_hat.detach()
+            tau_x_temp = tau_x.detach()
+            s_temp = s.detach()
+
+            # --------------------------------------------------------------
+            # Outer consistency sampling / VP re-noising
+            # --------------------------------------------------------------
+            if loop_idx < num_cm_steps - 2:
+                sigma_next = model.get_sigma(loop_idx + 1, device=img.device, dtype=img.dtype, )
+                a_next, _ = model.vp_coeffs(sigma_next)
+                noise_scale = torch.sqrt(torch.clamp(sigma_next ** 2 - 0.002 ** 2, min=0.0, ))
+                img = a_next * x_hat1 + a_next * noise_scale * torch.randn_like(x_hat1)
+            else:
+                img = x_hat1
+
+            img = img.detach()
+            pbar.set_postfix(
+                {
+                    'sigma': sigma.item(),
+                    'sigma_B': sigma_B.item(),
+                    'maxiter': max_iter,
+                },
+                refresh=False,
+            )
+            if record:
+                file_path = os.path.join(save_root, f"progress/x_cm_gamp_ps_{str(loop_idx).zfill(4)}.png", )
+                plt.imsave(file_path, clear_color(img), )
+
+            torch.cuda.empty_cache()
+
+        return img
+
     def p_sample_loop_cs(self,
                          model,
                          x_start,
@@ -2014,6 +2207,10 @@ class GaussianDiffusion:
             elif alg_name == 'Tgamp':
                 img = self._step_Tgamp_cm(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
                                           obs_module=obs_module)
+            elif alg_name == 'cm_gamp_ps':
+                img = self._step_cm_gamp_ps(model, x_start, measurement, H_funcs, noise_std, record, save_root,
+                                            alg_name,
+                                            obs_module=obs_module)
             elif alg_name == 'cm_mmps':
                 img = self._step_cm_mmps(model, x_start, measurement, H_funcs, noise_std, record, save_root, alg_name,
                                          obs_module=obs_module)
