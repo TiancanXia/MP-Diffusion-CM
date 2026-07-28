@@ -1,74 +1,46 @@
-# MP-Diffusion
+# MP-Diffusion-CM
 
-This repository implements **MP-Diffusion**, a novel approach that combines Message Passing (MP) with diffusion models for solving inverse problems.
+MP-Diffusion-CM combines diffusion or consistency-model priors with message-passing methods for image inverse problems. The current executable pipeline is specialized for **block compressed sensing (CS)** and includes support for non-differentiable, element-wise observations such as uniform quantization.
 
-## Key Features
+## Highlights
 
-- **GAMP Integration**: Implements GAMP algorithm for efficient posterior sampling in diffusion models
-- **Multiple Algorithms**: Supports MMPS, PGDM, DPS, GAMP-MM, GAMP-GA, VAMP, and their Consistency Model (CM) variants
-- **Flexible Configuration**: Easy-to-use YAML configuration files for different tasks
-- **Non-Differentiable Observations**: Supports element-wise non-differentiable measurement functions $y = g(Ax + n)$ (e.g., quantization), solved via GAMP's decoupled output-step likelihood estimation
-- **Consistency Model Prior**: Supports OpenAI Consistency Models as a prior through CM-GAMP-MM, CM-MMPS, and CM-VAMP sampling paths
+- DDPM/DDIM and Consistency Model (CM) priors.
+- MMPS, PGDM, DPS, GAMP, and VAMP reconstruction paths.
+- GAMP output steps for Gaussian and quantized measurements.
+- YAML-based experiment configuration.
+- Automatic saving of measurements, reconstructions, references, and intermediate results.
 
-## Non-Differentiable Observation Support
+## Supported algorithms
 
-GAMP-Diffusion extends the standard linear observation model to handle **non-differentiable element-wise measurement functions** $y = g(Ax + n)$, where $g$ can be any element-wise function (e.g., quantization, saturation). This is achieved by replacing only the output-step likelihood in GAMP, leaving the diffusion prior unchanged. Traditional gradient-based methods (DPS, MMPS, PGDM) are inapplicable here - GAMP-based algorithms are required.
+Algorithms are selected with `algorithm.name` in the task configuration. Names are case-sensitive.
 
-### Quantized Compressed Sensing
+| Prior     | `algorithm.name`                             | Notes                                                   |
+| --------- | -------------------------------------------- | ------------------------------------------------------- |
+| DDPM/DDIM | `mmps`, `pgdm`, `dps`                        | Gradient-based measurement correction                   |
+| DDPM/DDIM | `gamp_mm`, `gamp_ga`, `gamp-ga`, `gamp_dmps` | GAMP variants; support the quantized observation module |
+| DDPM/DDIM | `vamp`                                       | VAMP with a row-orthonormal CS operator                 |
+| CM        | `gamp_mm`, `cm_mmps`, `vamp`                 | CM versions of GAMP-MM, MMPS, and VAMP                  |
+| CM        | `Tvamp`, `Tgamp`, `cm_gamp_ps`               | Experimental turbo/fusion variants                      |
 
-Uniform quantization $y = Q_\Delta(Ax + n)$ with $Q_\Delta(\cdot) = \Delta \cdot \text{round}(\cdot / \Delta)$.
+Non-differentiable observations cannot be used with MMPS, PGDM, DPS, or VAMP. The supplied quantized-CS configurations therefore use `gamp_mm`.
 
-```bash
-python3 sample_condition.py \
-    --model_config=configs/model_config.yaml \
-    --diffusion_config=configs/diffusion_config.yaml \
-    --task_config=configs/quantized_CS_config.yaml \
-    --gpu=0 \
-    --save_dir=./results
-```
+## Method overview
 
-See `interface.md` for detailed mathematical derivation and implementation notes.
+For each reference image, the pipeline:
 
-For the CM prior path, non-differentiable observations are supported by the CM-GAMP route (`algorithm.name: gamp_mm` with `algorithm.prior_type: openai_cm`). CM-VAMP currently targets differentiable linear observations and will raise an error for non-differentiable observation modules.
+1. Builds a block measurement matrix from randomly signed and selected DCT rows.
+2. Generates `y = Ax + n`, with optional element-wise quantization.
+3. Predicts a clean endpoint with a DDPM/DDIM model or an OpenAI CM prior.
+4. Applies the selected MMPS, DPS, GAMP, or VAMP correction.
+5. Advances through the diffusion timesteps or CM noise levels and saves the reconstruction.
 
-## Prerequisites
+`guided_diffusion/gaussian_diffusion.py` is the central implementation. It contains the diffusion schedules and DDPM/DDIM samplers, the CS algorithm dispatcher, GAMP output/input updates, VAMP Module-A/Module-B updates, CM coordinate conversion and re-noising, and the experimental CM-GAMP/VAMP variants.
 
-- Python 3.8+
-- PyTorch 1.11.0+
-- CUDA 11.3+ (GPU recommended)
-- NVIDIA-Docker (optional, for containerized deployment)
+For quantized measurements, `QuantizedObservation` replaces the Gaussian GAMP output likelihood with element-wise numerical posterior integration while leaving the prior update unchanged.
 
-Lower CUDA versions are supported with appropriate PyTorch versions (e.g., CUDA 10.2 with PyTorch 1.7.0).
+## Installation
 
-## Getting Started
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/TiancanXia/GAMP-diffusion.git
-cd GAMP-diffusion
-```
-
-### 2. Download Pretrained Checkpoints
-
-Download the pretrained checkpoint `ffhq_10m.pt` from [Google Drive](https://drive.google.com/drive/folders/1jElnRoFv7b31fG0v6pTSQkelbSX3xGZh?usp=sharing) and place it in the `models/` directory:
-
-```bash
-mkdir models
-mv {DOWNLOAD_DIR}/ffhq_10m.pt ./models/
-```
-
-For CM-based experiments, also download an OpenAI Consistency Model checkpoint and place it under `consistency_models-main/checkpoints/`. The default CM configuration expects:
-
-```bash
-consistency_models-main/checkpoints/cd_cat256_lpips.pt
-```
-
-### 3. Setup Environment
-
-#### Option 1: Local Environment Setup
-
-Create conda environment and install dependencies:
+The original environment uses Python 3.8, PyTorch 1.11, and CUDA 11.3. A CUDA-capable GPU is strongly recommended.
 
 ```bash
 conda create -n gamp python=3.8
@@ -85,149 +57,144 @@ pip install einops
 pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
 ```
 
-#### Option 2: Docker Container
+### Checkpoints
 
-Build and run the Docker container (requires Docker >= 19.03 with GPU support):
+- DDPM default: `models/ffhq_10m.pt`, configured by `configs/model_config.yaml`.
+- CM default: `consistency_models-main/checkpoints/cd_cat256_lpips.pt`, configured by `configs/cm_diffusion_config.yaml`.
 
-```bash
-docker build -t gamp-diffusion:latest .
-docker run -it --rm --gpus=all gamp-diffusion
-```
+The FFHQ checkpoint is available from the original [Google Drive folder](https://drive.google.com/drive/folders/1jElnRoFv7b31fG0v6pTSQkelbSX3xGZh?usp=sharing). Place downloaded checkpoints at the paths above or update the corresponding YAML fields.
 
-### 4. Run Inference
+## Running experiments
 
-Execute the sampling script with your desired configuration:
+### Standard compressed sensing
 
 ```bash
-python sample_condition.py
-
-python3 sample_condition.py \
-    --model_config=configs/model_config.yaml \
-    --diffusion_config=configs/diffusion_config.yaml \
-    --task_config=configs/CS_config.yaml
+python sample_condition.py \
+  --model_config configs/model_config.yaml \
+  --diffusion_config configs/diffusion_config.yaml \
+  --task_config configs/CS_config.yaml \
+  --gpu 0 \
+  --save_dir ./results
 ```
 
-Run with the OpenAI Consistency Model prior:
+The default configuration uses DDIM with `gamp_mm`. Change `algorithm.name` in `configs/CS_config.yaml` to select another compatible algorithm.
+
+### Quantized compressed sensing
 
 ```bash
-python3 sample_condition.py \
-    --model_config=configs/model_config.yaml \
-    --diffusion_config=configs/cm_diffusion_config.yaml \
-    --task_config=configs/CS_cm_config.yaml \
-    --gpu=0 \
-    --save_dir=./results_cm
+python sample_condition.py \
+  --model_config configs/model_config.yaml \
+  --diffusion_config configs/diffusion_config.yaml \
+  --task_config configs/quantized_CS_config.yaml \
+  --gpu 0 \
+  --save_dir ./results_quantized
 ```
 
-`configs/CS_cm_config.yaml` selects the CM prior with:
+Uniform quantization is enabled by:
+
+```yaml
+measurement:
+  observation:
+    type: quantization
+    step_size: 0.1
+```
+
+### Consistency Model prior
+
+```bash
+python sample_condition.py \
+  --model_config configs/model_config.yaml \
+  --diffusion_config configs/cm_diffusion_config.yaml \
+  --task_config configs/CS_cm_config.yaml \
+  --gpu 0 \
+  --save_dir ./results_cm
+```
+
+The CM path requires both the `prior` section in the diffusion configuration and `prior_type` in the task configuration:
 
 ```yaml
 algorithm:
-  name: cm_mmps # gamp_mm cm_mmps vamp
+  name: cm_mmps
   prior_type: openai_cm
 ```
 
-Set `algorithm.name: vamp` in this file to run CM-VAMP. For quantized compressed sensing with the CM prior, use:
+For quantized CS with the CM prior, use `configs/quantized_CS_cm_config.yaml`; it selects CM-GAMP-MM with `algorithm.name: gamp_mm`.
+
+The shorthand script accepts the task name, GPU index, and output directory:
 
 ```bash
-python3 sample_condition.py \
-    --model_config=configs/model_config.yaml \
-    --diffusion_config=configs/cm_diffusion_config.yaml \
-    --task_config=configs/quantized_CS_cm_config.yaml \
-    --gpu=0 \
-    --save_dir=./results_cm_quant
+bash scripts/run_sampling.sh CS 0 ./results
 ```
 
-.vscode/settings.json:
+## Configuration reference
 
-```json
-{
-  "python-envs.defaultEnvManager": "ms-python.python:conda",
-  "python-envs.defaultPackageManager": "ms-python.python:conda",
-  "python.analysis.extraPaths": [
-    "./consistency_models-main"
-  ]
-}
+| File                                  | Purpose                                                |
+| ------------------------------------- | ------------------------------------------------------ |
+| `configs/model_config.yaml`           | DDPM U-Net architecture and checkpoint                 |
+| `configs/diffusion_config.yaml`       | DDPM/DDIM schedule and timestep respacing              |
+| `configs/cm_diffusion_config.yaml`    | CM checkpoint, sigma schedule, and correction controls |
+| `configs/CS_config.yaml`              | Standard CS algorithm, data, and noise                 |
+| `configs/quantized_CS_config.yaml`    | Quantized CS with a DDPM/DDIM prior                    |
+| `configs/CS_cm_config.yaml`           | CS with an OpenAI CM prior                             |
+| `configs/quantized_CS_cm_config.yaml` | Quantized CS with an OpenAI CM prior                   |
+
+Important fields:
+
+- `algorithm.name`: reconstruction algorithm.
+- `algorithm.prior_type`: set to `openai_cm` for CM paths.
+- `sampler`: `ddim` or `ddpm` for the standard diffusion paths.
+- `timestep_respacing`: number or spacing of retained diffusion steps.
+- `measurement.noise.sigma`: Gaussian noise standard deviation before optional quantization.
+- `measurement.observation.step_size`: uniform quantizer interval.
+- `prior.num_steps`, `prior.base_num_steps`, `prior.timestep_indices`: CM sigma schedule.
+- `prior.correction_damping`, `prior.tau_inflation`: CM correction controls.
+
+## Outputs
+
+Results are written below `<save_dir>/CS/`:
+
+```text
+<save_dir>/CS/
+|-- input/      # measurements
+|-- recon/      # final reconstructions
+|-- progress/   # intermediate samples
+`-- label/      # reference images
 ```
 
-## Project Structure
+The entry point also reports per-image PSNR and sampling time.
 
+## Project structure
+
+```text
+.
+|-- sample_condition.py                 # experiment entry point
+|-- GAMP.py                             # reusable GAMP components
+|-- prior_models.py                     # differentiable OpenAI CM wrapper
+|-- guided_diffusion/
+|   |-- gaussian_diffusion.py           # samplers and algorithm dispatcher
+|   |-- measurements.py                 # operators, noise, and quantization
+|   `-- condition_methods.py            # gradient conditioning methods
+|-- configs/                            # experiment configurations
+|-- consistency_models-main/            # vendored OpenAI CM implementation
+|-- data/                               # input images
+|-- models/                             # DDPM checkpoints
+`-- results/                            # default output root
 ```
-GAMP-diffusion/
-|-- GAMP.py                         # Core GAMP algorithm implementation
-|-- prior_models.py                 # OpenAI CM prior wrapper and sigma schedule setup
-|-- sample_condition.py             # Main inference script
-|-- compute_metric.py               # Metric computation utilities
-|-- guided_diffusion/               # Diffusion model components
-|   |-- measurements.py             # Measurement operators
-|   `-- gaussian_diffusion.py       # DDPM/CM samplers with GAMP, MMPS, and VAMP integration and GAMP/VAMP with CM denoiser
-|-- consistency_models-main/        # OpenAI Consistency Models code and checkpoints
-|-- configs/                        # Configuration files for different tasks
-|   |-- diffusion_config.yaml        # Standard diffusion prior config
-|   |-- cm_diffusion_config.yaml     # OpenAI CM prior config
-|   |-- CS_config.yaml               # Standard compressed sensing config
-|   |-- CS_cm_config.yaml            # CM compressed sensing config
-|   `-- quantized_CS_cm_config.yaml  # CM quantized compressed sensing config
-|-- models/                         # Pretrained DDPM checkpoints
-|-- results/                        # Output directory for reconstructed images
-`-- util/                           # Utility functions
-```
-
-## Algorithm Details
-
-The standard diffusion path uses `configs/diffusion_config.yaml` and dispatches `mmps`, `pgdm`, `dps`, `gamp_mm`, `gamp_ga`, or `vamp` through `guided_diffusion/gaussian_diffusion.py`.
-
-The CM path is enabled by adding a `prior` section in `configs/cm_diffusion_config.yaml`:
-
-```yaml
-prior:
-  type: openai_cm
-  repo_root: consistency_models-main
-  checkpoint: consistency_models-main/checkpoints/cd_cat256_lpips.pt
-  image_size: 256
-  sigma_min: 0.002
-  sigma_max: 80.0
-  num_steps: 20
-  base_num_steps: 40
-  timestep_indices: null
-  tau_inflation: 1.0
-  correction_damping: 1
-  clip_denoised: True
-```
-
-When `algorithm.prior_type: openai_cm` is set, `sample_condition.py` builds a `ConsistencyPrior` from `prior_models.py` instead of the DDPM model. The sampler then dispatches:
-
-- `algorithm.name: gamp_mm` -> CM-GAMP-MM (`_step_gamp_cm`)
-- `algorithm.name: cm_mmps` -> CM-MMPS (`_step_cm_mmps`)
-- `algorithm.name: vamp` -> CM-VAMP (`_step_vamp_cm`)
-
-CM-VAMP keeps the original VAMP Module-A/Module-B structure, obtains a differentiable endpoint from the consistency model through `endpoint_from_vp(...)`, and advances between CM sigma levels with VP re-noising.
-
-Example results will be saved in the `results/` directory with the following structure:
-
-- `input/`: Measurement inputs
-- `recon/`: Reconstructed images
-- `progress/`: Intermediate sampling results
-- `label/`: Ground truth images (for comparison)
 
 ## Citation
 
-If you find this work useful in your research, please cite the original DPS paper:
+This code builds on Diffusion Posterior Sampling. If it is useful in your research, please cite:
 
 ```bibtex
-@inproceedings{
-chung2023diffusion,
-title={Diffusion Posterior Sampling for General Noisy Inverse Problems},
-author={Hyungjin Chung and Jeongsol Kim and Michael Thompson Mccann and Marc Louis Klasky and Jong Chul Ye},
-booktitle={The Eleventh International Conference on Learning Representations},
-year={2023},
-url={https://openreview.net/forum?id=OnD9zGAGT0k}
+@inproceedings{chung2023diffusion,
+  title     = {Diffusion Posterior Sampling for General Noisy Inverse Problems},
+  author    = {Hyungjin Chung and Jeongsol Kim and Michael Thompson McCann and Marc Louis Klasky and Jong Chul Ye},
+  booktitle = {The Eleventh International Conference on Learning Representations},
+  year      = {2023},
+  url       = {https://openreview.net/forum?id=OnD9zGAGT0k}
 }
 ```
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## Acknowledgments
 
-This implementation builds upon the foundation of [Diffusion Posterior Sampling](https://github.com/DPS2022/diffusion-posterior-sampling) and incorporates GAMP algorithms for improved inverse problem solving.
+This repository is based on [Diffusion Posterior Sampling](https://github.com/DPS2022/diffusion-posterior-sampling) and incorporates GAMP/VAMP methods together with the OpenAI Consistency Models implementation.
