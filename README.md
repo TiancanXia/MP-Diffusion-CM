@@ -169,16 +169,15 @@ The entry point also reports per-image PSNR and sampling time.
 
 ## Citation
 
-If it is useful in your research, please cite:
+If you find this work useful in your research, please cite:
 
 ```bibtex
-@software{xia_mp_diffusion_cm,
-  author    = {Xia, Tiancan},
-  title     = {{MP-Diffusion-CM}},
-  year      = {2026},
-  publisher = {GitHub},
-  url       = {https://github.com/TiancanXia/MP-Diffusion-CM},
-  note      = {GitHub repository}
+@misc{xia_mp_diffusion_cm,
+  author       = {Xia, Tiancan},
+  title        = {{MP-Diffusion-CM}},
+  howpublished = {\url{https://github.com/TiancanXia/MP-Diffusion-CM}},
+  year         = {2026},
+  note         = {GitHub repository}
 }
 ```
 
