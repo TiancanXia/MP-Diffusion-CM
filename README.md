@@ -172,12 +172,13 @@ The entry point also reports per-image PSNR and sampling time.
 This code builds on Diffusion Posterior Sampling. If it is useful in your research, please cite:
 
 ```bibtex
-@inproceedings{chung2023diffusion,
-  title     = {Diffusion Posterior Sampling for General Noisy Inverse Problems},
-  author    = {Hyungjin Chung and Jeongsol Kim and Michael Thompson McCann and Marc Louis Klasky and Jong Chul Ye},
-  booktitle = {The Eleventh International Conference on Learning Representations},
-  year      = {2023},
-  url       = {https://openreview.net/forum?id=OnD9zGAGT0k}
+@software{xia_mp_diffusion_cm,
+  author    = {Xia, Tiancan},
+  title     = {{MP-Diffusion-CM}},
+  year      = {2026},
+  publisher = {GitHub},
+  url       = {https://github.com/TiancanXia/MP-Diffusion-CM},
+  note      = {GitHub repository}
 }
 ```
 
