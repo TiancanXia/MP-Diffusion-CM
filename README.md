@@ -169,7 +169,7 @@ The entry point also reports per-image PSNR and sampling time.
 
 ## Citation
 
-This code builds on Diffusion Posterior Sampling. If it is useful in your research, please cite:
+If it is useful in your research, please cite:
 
 ```bibtex
 @software{xia_mp_diffusion_cm,
